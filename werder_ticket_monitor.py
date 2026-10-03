@@ -1,197 +1,179 @@
-import os
-
 import json
+import os
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
-import requests
 
-from bs4 import BeautifulSoup
+# ============================================================
+# Werder Bremen - Mitglieder-Ticketmonitor
+# Keine Werder-Anmeldedaten erforderlich.
+# ============================================================
 
-WERDER_URL = "https://www.werder.de/tickets/maenner/heimspiele"
-
-STATE_FILE = "state.json"
-
-TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-
+TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-def get_page():
+GERMANY = ZoneInfo("Europe/Berlin")
+STATE_FILE = "state.json"
 
-    response = requests.get(
 
-        WERDER_URL,
+# Offizielle, aktuell veröffentlichte Bestellfristen
+# Quelle: werder.de/tickets/maenner/heimspiele
+SALES = [
+    {
+        "opponent": "RB Leipzig",
+        "start": "2026-07-20T10:30:00+02:00",
+    },
+    {
+        "opponent": "FC Augsburg",
+        "start": "2026-07-20T10:30:00+02:00",
+    },
+    {
+        "opponent": "SC Paderborn 07",
+        "start": "2026-07-20T10:30:00+02:00",
+    },
+    {
+        "opponent": "TSG Hoffenheim",
+        "start": "2026-07-20T10:30:00+02:00",
+    },
+    {
+        "opponent": "Hamburger SV",
+        "start": "2026-09-07T10:30:00+02:00",
+    },
+    {
+        "opponent": "Borussia M'gladbach",
+        "start": "2026-09-21T10:30:00+02:00",
+    },
+    {
+        "opponent": "Bayer 04 Leverkusen",
+        "start": "2026-10-19T10:30:00+02:00",
+    },
+    {
+        "opponent": "1. FC Union Berlin",
+        "start": "2026-11-02T10:30:00+01:00",
+    },
+    {
+        "opponent": "SV Elversberg",
+        "start": "2026-11-23T10:30:00+01:00",
+    },
+]
 
-        headers={
-
-            "User-Agent": "Mozilla/5.0 WerderTicketMonitor/1.0"
-
-        },
-
-        timeout=30
-
-    )
-
-    response.raise_for_status()
-
-    return response.text
-
-def send_telegram(message):
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-
-    requests.post(
-
-        url,
-
-        data={
-
-            "chat_id": TELEGRAM_CHAT_ID,
-
-            "text": message,
-
-            "disable_web_page_preview": False
-
-        },
-
-        timeout=30
-
-    ).raise_for_status()
 
 def load_state():
-
     if not os.path.exists(STATE_FILE):
-
         return {}
 
-    with open(STATE_FILE, "r", encoding="utf-8") as f:
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
-        return json.load(f)
 
 def save_state(state):
-
     with open(STATE_FILE, "w", encoding="utf-8") as f:
-
         json.dump(state, f, ensure_ascii=False, indent=2)
 
+
+def send_telegram(message):
+    url = (
+        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    )
+
+    data = urllib.parse.urlencode({
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+    }).encode("utf-8")
+
+    request = urllib.request.Request(
+        url,
+        data=data,
+        method="POST",
+    )
+
+    with urllib.request.urlopen(request, timeout=20) as response:
+        if response.status != 200:
+            raise RuntimeError(
+                f"Telegram Fehler: HTTP {response.status}"
+            )
+
+
 def main():
+    now = datetime.now(timezone.utc).astimezone(GERMANY)
+    state = load_state()
 
-    html = get_page()
+    print("Aktuelle Zeit:", now.isoformat())
+    print("Prüfe Werder-Mitglieder-Bestellfristen...")
 
-    soup = BeautifulSoup(html, "html.parser")
+    for sale in SALES:
+        start = datetime.fromisoformat(sale["start"]).astimezone(GERMANY)
+        opponent = sale["opponent"]
 
-    text = soup.get_text(" ", strip=True)
+        # Sekunden bis zum Verkaufsstart
+        seconds_until = (start - now).total_seconds()
 
-    previous = load_state()
+        print(
+            f"{opponent}: Start {start.strftime('%d.%m.%Y %H:%M')}, "
+            f"{seconds_until:.0f} Sekunden entfernt"
+        )
 
-    # Wir überwachen die aktuellen Bearbeitungsstände.
+        # ----------------------------------------------------
+        # 15 Minuten vorher
+        # ----------------------------------------------------
+        reminder_key = f"{opponent}_{sale['start']}_15min"
 
-    interesting_games = [
+        if 0 <= seconds_until <= 5 * 60:
+            # Falls wir den 15-Minuten-Zeitpunkt verpasst haben,
+            # lösen wir trotzdem beim nächsten Lauf aus.
+            pass
 
-        "RB Leipzig",
-
-        "FC Augsburg",
-
-        "SC Paderborn 07",
-
-        "TSG Hoffenheim",
-
-        "Hamburger SV",
-
-        "Borussia M'gladbach",
-
-        "Bayer 04 Leverkusen",
-
-        "1. FC Union Berlin",
-
-        "SV Elversberg",
-
-    ]
-
-    current = {}
-
-    for game in interesting_games:
-
-        position = text.find(game)
-
-        if position == -1:
-
-            continue
-
-        section = text[position:position + 500]
-
-        statuses = [
-
-            "Bestellphase läuft",
-
-            "in Bearbeitung",
-
-            "Bestellphase abgeschlossen",
-
-            "Bestellphase beendet",
-
-            "Bearbeitung abgeschlossen",
-
-        ]
-
-        status = "unbekannt"
-
-        for possible_status in statuses:
-
-            if possible_status in section:
-
-                status = possible_status
-
-                break
-
-        current[game] = status
-
-    # Beim ersten Lauf nur Zustand speichern.
-
-    # Dadurch bekommst du nicht sofort eine Menge alter Meldungen.
-
-    if not previous:
-
-        save_state(current)
-
-        print("Erster Lauf abgeschlossen. Ausgangszustand gespeichert.")
-
-        return
-
-    # Änderungen erkennen.
-
-    for game, status in current.items():
-
-        old_status = previous.get(game)
-
-        if status != old_status:
-
-            # Besonders interessant für dich:
-
-            # Bestellphase läuft / Bearbeitung beginnt.
-
-            if status in ["Bestellphase läuft", "in Bearbeitung"]:
-
+        if 10 * 60 <= seconds_until <= 20 * 60:
+            if reminder_key not in state:
                 message = (
-
-                    "🎟️ WERDER TICKET-ALARM\n\n"
-
-                    f"SV Werder Bremen – {game}\n\n"
-
-                    f"Status: {status}\n\n"
-
-                    "Die Mitglieder-Bestellphase könnte geöffnet "
-
-                    "bzw. bearbeitet werden.\n\n"
-
-                    "👉 Jetzt prüfen:\n"
-
-                    f"{WERDER_URL}"
-
+                    "🟢 WERDER TICKET-ALARM\n\n"
+                    f"🏟️ Heimspiel: Werder – {opponent}\n\n"
+                    "⏰ Die Mitglieder-Bestellphase startet "
+                    f"in etwa 15 Minuten:\n"
+                    f"{start.strftime('%d.%m.%Y um %H:%M Uhr')}\n\n"
+                    "👤 Fördermitglieder können bestellen.\n"
+                    "👉 Jetzt schon bei werder.de einloggen "
+                    "und um 10:30 Uhr bereit sein."
                 )
 
                 send_telegram(message)
+                state[reminder_key] = now.isoformat()
+                save_state(state)
 
-    save_state(current)
+                print("15-Minuten-Warnung gesendet.")
+
+        # ----------------------------------------------------
+        # Zum Verkaufsstart
+        # ----------------------------------------------------
+        start_key = f"{opponent}_{sale['start']}_start"
+
+        if 0 <= seconds_until <= 5 * 60:
+            if start_key not in state:
+                message = (
+                    "🚨 WERDER TICKET-ALARM 🚨\n\n"
+                    f"🏟️ Werder – {opponent}\n\n"
+                    "🎟️ Die Mitglieder-Bestellphase "
+                    "sollte jetzt gestartet sein!\n\n"
+                    "👤 Fördermitglieder sind zugelassen.\n"
+                    "👉 Jetzt direkt zu werder.de und bestellen."
+                )
+
+                send_telegram(message)
+                state[start_key] = now.isoformat()
+                save_state(state)
+
+                print("Startmeldung gesendet.")
+
+    # Alte Termine müssen nicht gespeichert werden.
+    save_state(state)
+
+    print("Fertig.")
+
 
 if __name__ == "__main__":
-
     main()
