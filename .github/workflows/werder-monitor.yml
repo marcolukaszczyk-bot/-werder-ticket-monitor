@@ -22,31 +22,20 @@ jobs:
           python-version: "3.x"
 
       - name: Abhängigkeiten installieren
-        run: |
-          pip install requests beautifulsoup4
+        run: pip install requests beautifulsoup4
 
       - name: Telegram Testnachricht
-
         env:
-
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
         run: |
-
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-
-            -d "chat_id=${TELEGRAM_CHAT_ID}" \
-
-            --data-urlencode "text=🟢 Werder Ticket Monitor: Test erfolgreich! Dein Telegram-Alarm funktioniert."
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=🟢 Werder Ticket Monitor: Test erfolgreich! Dein Telegram-Alarm funktioniert."
 
       - name: Werder Ticket Monitor starten
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python werder_ticket_monitor.py
+        run: python werder_ticket_monitor.py
 
       - name: Status speichern
         run: |
@@ -54,10 +43,8 @@ jobs:
             echo "Keine state.json vorhanden."
             exit 0
           fi
-
           git config user.name "Werder Ticket Monitor"
           git config user.email "actions@github.com"
-
           git add state.json
           git diff --cached --quiet || git commit -m "Update ticket monitor state"
           git push
